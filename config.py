@@ -169,6 +169,15 @@ SWING_LOOKBACK: Final[int] = _int("SWING_LOOKBACK", 20)
 HVN_PROXIMITY_PCT: Final[float] = _float("HVN_PROXIMITY_PCT", 0.005)
 
 # ---------------------------------------------------------------------------
+# InfluxDB v2 Telemetry (metrics_exporter.py)
+# ---------------------------------------------------------------------------
+
+INFLUXDB_URL: Final[str] = _str("INFLUXDB_URL", "http://localhost:8086")
+INFLUXDB_TOKEN: Final[str] = _str("INFLUXDB_TOKEN", "")
+INFLUXDB_ORG: Final[str] = _str("INFLUXDB_ORG", "neko")
+INFLUXDB_BUCKET: Final[str] = _str("INFLUXDB_BUCKET", "neko_signal")
+
+# ---------------------------------------------------------------------------
 # Webhook / Notifier
 # ---------------------------------------------------------------------------
 

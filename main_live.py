@@ -16,10 +16,12 @@ Pipeline (per pair, per cycle):
     │  8. Risk Manager — validate TP/SL and RR         │
     │  9. State Manager — lock the pair                │
     │ 10. Notifier — POST signal to webhook            │
+    │ 11. Metrics Exporter — write to InfluxDB         │
     └─────────────────────────────────────────────────┘
 
 All five pairs are processed **concurrently** via ``asyncio.gather``, sharing
 a single exchange connection and a single HTTP session for efficiency.
+The InfluxDB exporter is also shared so connections are pooled.
 
 Run:
     python main_live.py
@@ -46,6 +48,7 @@ from config import (
 from data_ingestion import create_exchange, fetch_extended_ohlcv, fetch_orderbook
 from logic_filters import gate_anti_wash_trading, gate_session_killzone
 from notifier import send_signal
+from metrics_exporter import InfluxDBExporter
 from risk_manager import RiskParams, calculate_risk_params
 from scoring_engine import compute_score
 from state_manager import StateManager
@@ -83,6 +86,7 @@ async def _process_pair(
     exchange: ccxt.Exchange,
     state_manager: StateManager,
     http_session: aiohttp.ClientSession,
+    exporter: InfluxDBExporter,
 ) -> None:
     """Executes the full signal pipeline for a single trading pair.
 
@@ -95,6 +99,7 @@ async def _process_pair(
         exchange:      Shared async ccxt exchange instance.
         state_manager: Shared ``StateManager`` instance.
         http_session:  Shared ``aiohttp.ClientSession`` for webhook delivery.
+        exporter:      Shared ``InfluxDBExporter`` for metrics telemetry.
     """
     tag: str = f"[{symbol.split('/')[0]}]"  # e.g. "[BTC]" for clean logs
 
@@ -139,6 +144,13 @@ async def _process_pair(
                 "%s Position open (%s). Awaiting TP/SL. Skipping new signal.",
                 tag, state_manager.get_state(symbol).name,
             )
+            # Still export metrics every cycle regardless of position state
+            await exporter.export_live_metrics(
+                symbol=symbol,
+                df=df,
+                score=0,
+                trade_state=state_manager.get_state(symbol).name,
+            )
             return
 
         # ------------------------------------------------------------------ #
@@ -159,6 +171,13 @@ async def _process_pair(
             logger.debug(
                 "%s Score %+d did not meet threshold (±%d). No signal.",
                 tag, score, SCORE_LONG_THRESHOLD,
+            )
+            # Export metrics even when no signal fires
+            await exporter.export_live_metrics(
+                symbol=symbol,
+                df=df,
+                score=score,
+                trade_state="IDLE",
             )
             return
 
@@ -202,6 +221,16 @@ async def _process_pair(
             session=http_session,
         )
 
+        # ------------------------------------------------------------------ #
+        # Step 11: Export Telemetry to InfluxDB (non-blocking, fire-and-forget)
+        # ------------------------------------------------------------------ #
+        await exporter.export_live_metrics(
+            symbol=symbol,
+            df=df,
+            score=score,
+            trade_state=direction,  # "LONG" or "SHORT" just confirmed
+        )
+
     except asyncio.CancelledError:
         # Propagate cancellation so the outer loop can shut down cleanly
         raise
@@ -236,6 +265,7 @@ async def run_scanner() -> None:
 
     state_manager = StateManager(pairs=TRADING_PAIRS)
     exchange: ccxt.Exchange = create_exchange()
+    exporter: InfluxDBExporter = InfluxDBExporter()
 
     async with aiohttp.ClientSession(headers=WEBHOOK_HEADERS) as http_session:
         try:
@@ -254,7 +284,7 @@ async def run_scanner() -> None:
                 # Run all pair pipelines concurrently
                 results = await asyncio.gather(
                     *[
-                        _process_pair(symbol, exchange, state_manager, http_session)
+                        _process_pair(symbol, exchange, state_manager, http_session, exporter)
                         for symbol in TRADING_PAIRS
                     ],
                     return_exceptions=True,
@@ -283,6 +313,7 @@ async def run_scanner() -> None:
         except KeyboardInterrupt:
             logger.info("KeyboardInterrupt received — shutting down.")
         finally:
+            await exporter.close()
             await exchange.close()
             logger.info("Exchange connection closed. NekoSignal stopped. Goodbye. 🐾")
 
