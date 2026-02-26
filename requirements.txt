@@ -1,0 +1,18 @@
+# Neko Signal System — Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Exchange connectivity
+ccxt>=4.2.0
+
+# Environment variable loader (.env support)
+python-dotenv>=1.0.0
+
+# Numerical & DataFrame engine
+numpy>=1.26.0
+pandas>=2.1.0
+
+# Async HTTP (webhook dispatch)
+aiohttp>=3.9.0
+
+# Type-hint backport (Python 3.8/3.9 compatibility)
+typing_extensions>=4.9.0
