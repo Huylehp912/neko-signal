@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: neko_influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    environment:
+      # Tự động setup InfluxDB v2 không cần qua giao diện web
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=nekosignal2026!
+      - DOCKER_INFLUXDB_INIT_ORG=neko_org
+      - DOCKER_INFLUXDB_INIT_BUCKET=neko_metrics
+      # CHÚ Ý: Đây là Token siêu quan trọng để bot Python gửi dữ liệu vào
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-auth-token-neko
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: neko_grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - influxdb
+    restart: unless-stopped
+
+# Khai báo Volume để dữ liệu không bị mất khi tắt Docker
+volumes:
+  influxdb-data:
+  influxdb-config:
+  grafana-data:
