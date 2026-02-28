@@ -373,6 +373,7 @@ def _score_liquidity_zones(df: pd.DataFrame) -> int:
 def compute_score(
     df: pd.DataFrame,
     orderbook: Optional[dict] = None,
+    symbol: str = "",
 ) -> int:
     """Computes the aggregate directional score for a single symbol.
 
@@ -410,9 +411,10 @@ def compute_score(
 
     total: int = c1 + c2 + c3 + c4 + c5
 
-    logger.debug(
-        "Score → OFI=%+d | CVD=%+d | VWAP=%+d | Momentum=%+d | Liquidity=%+d | TOTAL=%+d",
-        c1, c2, c3, c4, c5, total,
+    _tag: str = f"[{symbol.split('/')[0]}] " if symbol else ""
+    logger.info(
+        "%sScore → OFI=%+d | CVD=%+d | VWAP=%+d | Momentum=%+d | Liquidity=%+d | TOTAL=%+d",
+        _tag, c1, c2, c3, c4, c5, total,
     )
 
     return total

@@ -114,7 +114,7 @@ def gate_session_killzone(utc_now: datetime | None = None) -> bool:
 # Gate 2: Anti-Wash Trading
 # ---------------------------------------------------------------------------
 
-def gate_anti_wash_trading(df: pd.DataFrame) -> bool:
+def gate_anti_wash_trading(df: pd.DataFrame, symbol: str = "") -> bool:
     """Gate 2: Rejects candles that exhibit wash-trading or synthetic-volume signatures.
 
     Applies three independent sub-filters against the last *completed* candle
@@ -140,11 +140,13 @@ def gate_anti_wash_trading(df: pd.DataFrame) -> bool:
         df: DataFrame with columns
             ``[open, high, low, close, volume, taker_buy_volume]``.
             Minimum required rows: ``ATR_MA_PERIOD + ATR_PERIOD + 2``.
+        symbol: Optional trading symbol used for log tagging (e.g. ``"BTC/USDT:USDT"``).
 
     Returns:
         ``True`` if the candle passes all three sub-filters (clean volume).
         ``False`` if any sub-filter detects suspicious activity.
     """
+    _tag: str = f"[{symbol.split('/')[0]}] " if symbol else ""
     min_required: int = ATR_MA_PERIOD + ATR_PERIOD + 2
     if df.empty or len(df) < min_required:
         logger.warning(
@@ -170,10 +172,9 @@ def gate_anti_wash_trading(df: pd.DataFrame) -> bool:
     volume_efficiency: float = price_displacement / total_volume
 
     if volume_efficiency < MIN_VOLUME_EFFICIENCY:
-        logger.debug(
-            "Gate 2 FAIL | Low Volume Efficiency: %.8f < %.8f threshold.",
-            volume_efficiency,
-            MIN_VOLUME_EFFICIENCY,
+        logger.info(
+            "%sGate 2 FAIL | Low Vol Efficiency: %.6f < %.6f threshold.",
+            _tag, volume_efficiency, MIN_VOLUME_EFFICIENCY,
         )
         return False
 
@@ -195,10 +196,9 @@ def gate_anti_wash_trading(df: pd.DataFrame) -> bool:
         return False
 
     if latest_atr < latest_atr_ma:
-        logger.debug(
-            "Gate 2 FAIL | ATR contracting: ATR=%.5f < ATR_MA=%.5f.",
-            latest_atr,
-            latest_atr_ma,
+        logger.info(
+            "%sGate 2 FAIL | ATR contracting: ATR=%.5f < ATR_MA=%.5f.",
+            _tag, latest_atr, latest_atr_ma,
         )
         return False
 
@@ -209,19 +209,14 @@ def gate_anti_wash_trading(df: pd.DataFrame) -> bool:
     taker_ratio: float = taker_buy / total_volume
 
     if WASH_TRADE_TAKER_RATIO_LOW <= taker_ratio <= WASH_TRADE_TAKER_RATIO_HIGH:
-        logger.debug(
-            "Gate 2 FAIL | Suspiciously balanced taker ratio: %.4f in [%.2f, %.2f].",
-            taker_ratio,
-            WASH_TRADE_TAKER_RATIO_LOW,
-            WASH_TRADE_TAKER_RATIO_HIGH,
+        logger.info(
+            "%sGate 2 FAIL | Balanced taker ratio: %.4f in [%.2f, %.2f].",
+            _tag, taker_ratio, WASH_TRADE_TAKER_RATIO_LOW, WASH_TRADE_TAKER_RATIO_HIGH,
         )
         return False
 
-    logger.debug(
-        "Gate 2 PASS | Efficiency=%.8f | ATR=%.5f/%.5f | TakerRatio=%.4f.",
-        volume_efficiency,
-        latest_atr,
-        latest_atr_ma,
-        taker_ratio,
+    logger.info(
+        "%sGate 2 PASS | Efficiency=%.6f | ATR=%.5f/%.5f | TakerRatio=%.4f.",
+        _tag, volume_efficiency, latest_atr, latest_atr_ma, taker_ratio,
     )
     return True

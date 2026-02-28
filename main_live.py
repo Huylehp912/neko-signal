@@ -33,6 +33,7 @@ import asyncio
 import logging
 import sys
 from datetime import datetime, timezone
+from logging.handlers import RotatingFileHandler
 from typing import Optional
 
 import aiohttp
@@ -64,7 +65,12 @@ def _configure_logging() -> None:
 
     handlers: list[logging.Handler] = [
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("neko_signal.log", encoding="utf-8"),
+        RotatingFileHandler(
+            "neko_signal.log",
+            maxBytes=10 * 1024 * 1024,  # 10 MB per file
+            backupCount=5,              # keep last 5 rotated files
+            encoding="utf-8",
+        ),
     ]
 
     logging.basicConfig(level=logging.INFO, format=fmt, datefmt=datefmt, handlers=handlers)
@@ -107,9 +113,9 @@ async def _process_pair(
         # ------------------------------------------------------------------ #
         # Step 1: Gate 1 — Session Killzone                                   #
         # ------------------------------------------------------------------ #
-        if not gate_session_killzone():
-            logger.debug("%s Gate 1 FAIL: Outside session window.", tag)
-            return
+        # if not gate_session_killzone():
+        #     logger.info("%s Gate 1 FAIL: Outside killzone (12:00–21:00 UTC).", tag)
+        #     return
 
         # ------------------------------------------------------------------ #
         # Step 2: Fetch Data                                                  #
@@ -123,11 +129,20 @@ async def _process_pair(
             logger.warning("%s Skipping: OHLCV fetch failed.", tag)
             return
 
+        _last_vol = float(df["volume"].iloc[-1])
+        logger.info(
+            "%s OHLCV | %d candles | Close=%.4f | Vol=%.2f | TakerBuy=%.1f%%",
+            tag, len(df),
+            float(df["close"].iloc[-1]),
+            _last_vol,
+            float(df["taker_buy_volume"].iloc[-1]) / (_last_vol + 1e-12) * 100,
+        )
+
         # ------------------------------------------------------------------ #
         # Step 3: Gate 2 — Anti-Wash Trading                                  #
         # ------------------------------------------------------------------ #
-        if not gate_anti_wash_trading(df):
-            logger.debug("%s Gate 2 FAIL: Wash-trading signature detected.", tag)
+        if not gate_anti_wash_trading(df, symbol):
+            logger.info("%s Gate 2 FAIL: Wash-trading signature detected.", tag)
             return
 
         # ------------------------------------------------------------------ #
@@ -140,7 +155,7 @@ async def _process_pair(
         # Step 5: Skip if the pair is already in an open position             #
         # ------------------------------------------------------------------ #
         if not state_manager.is_idle(symbol):
-            logger.debug(
+            logger.info(
                 "%s Position open (%s). Awaiting TP/SL. Skipping new signal.",
                 tag, state_manager.get_state(symbol).name,
             )
@@ -156,7 +171,7 @@ async def _process_pair(
         # ------------------------------------------------------------------ #
         # Step 6: Scoring Engine                                              #
         # ------------------------------------------------------------------ #
-        score: int = compute_score(df, orderbook)
+        score: int = compute_score(df, orderbook, symbol)
         logger.info("%s Score = %+d", tag, score)
 
         # ------------------------------------------------------------------ #
@@ -168,7 +183,7 @@ async def _process_pair(
         elif score <= SCORE_SHORT_THRESHOLD:
             direction = "SHORT"
         else:
-            logger.debug(
+            logger.info(
                 "%s Score %+d did not meet threshold (±%d). No signal.",
                 tag, score, SCORE_LONG_THRESHOLD,
             )
@@ -265,6 +280,9 @@ async def run_scanner() -> None:
 
     state_manager = StateManager(pairs=TRADING_PAIRS)
     exchange: ccxt.Exchange = create_exchange()
+    logger.info("Connecting to Binance USDM Futures ...")
+    await exchange.load_markets()
+    logger.info("✓ Binance connected — %d instruments loaded.", len(exchange.markets))
     exporter: InfluxDBExporter = InfluxDBExporter()
 
     async with aiohttp.ClientSession(headers=WEBHOOK_HEADERS) as http_session:
